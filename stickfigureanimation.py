@@ -98,15 +98,7 @@ class StickFigureAnimation:
                     x1 = x0 + cell_size
                     y1 = y0 + cell_size
                     canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline='gray')
-            # Draw joints as red
-            if 'joints' in frame:
-                for pos in frame['joints'].values():
-                    row, col = pos
-                    x0 = col * cell_size
-                    y0 = row * cell_size
-                    x1 = x0 + cell_size
-                    y1 = y0 + cell_size
-                    canvas.create_rectangle(x0, y0, x1, y1, fill='red', outline='red')
+            # Do NOT draw joints as red during animation!
 
         def play_animation(loop=False):
             running['flag'] = True
@@ -145,5 +137,6 @@ class StickFigureAnimation:
 
 if __name__ == "__main__":
     anim = StickFigureAnimation()
-    anim.load_animation_from_jsons(["stand - wide stance.json", "wave1.json"], timings=[200, 400])
+    anim.load_animation_from_jsons(["highWave1.json", "highWave2.json"], timings=[200,200])
+    #anim.load_animation_from_jsons(["stand - wide stance.json", "wave1.json", "wave2.json"], timings=[200, 200, 400])
     anim.run_animation()

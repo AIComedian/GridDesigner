@@ -173,13 +173,13 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
         # Save joints as a dict of joint_name: [row, col]
         joints = {k: [v[0], v[1]] for k, v in self.joint_vars.items()}
 
-        # Save all diff cells, including joints, as string keys for JSON
+        # Save all diff cells as string keys for JSON, just 0/1 (no special 'red' value)
         boxes = {f"{row},{col}": self.grid[row][col] for (row, col) in diff_cells}
 
         data = {
             'name': stick_name,
             'joints': joints,
-            'boxes': boxes,
+            'boxes': boxes,  # values are only 0 (default) or 1 (contrast)
             'default_color': self.default_color,
             'grid_width': self.grid_width,
             'grid_height': self.grid_height,
