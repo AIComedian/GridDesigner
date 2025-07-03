@@ -15,7 +15,7 @@ class StickFigureAnimation:
         self.grid_width = None
         self.grid_height = None
         self.default_color = 0
-        self.cell_size = 10
+        self.cell_size = 10  # Initial cell size
 
     def add_frame_from_json(self, stick_figure_json, duration=200, background_json=None):
         with open(stick_figure_json, 'r') as f:
@@ -85,12 +85,12 @@ class StickFigureAnimation:
         self.grid_height = self.frames[0].get('grid_height', self.grid_height)
         self.default_color = self.frames[0].get('default_color', self.default_color)
 
-    def draw_frame_on_canvas(self, canvas, frame, background=None):
+    def draw_frame_on_canvas(self, canvas, frame, background=None, cell_size=None):
         canvas.delete("all")
         grid_width = frame['grid_width']
         grid_height = frame['grid_height']
         default_color = frame.get('default_color', 0)
-        cell_size = self.cell_size
+        cell_size = cell_size or self.cell_size
 
         # Draw background first
         if background and "boxes" in background:
@@ -127,14 +127,13 @@ class StickFigureAnimation:
                     y1 = y0 + cell_size
                     canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline='gray')
 
-    def draw_frame_to_image(self, frame, background=None):
+    def draw_frame_to_image(self, frame, background=None, cell_size=None):
         grid_width = frame['grid_width']
         grid_height = frame['grid_height']
         default_color = frame.get('default_color', 0)
-        cell_size = self.cell_size
+        cell_size = cell_size or self.cell_size
         img = Image.new('RGB', (grid_width * cell_size, grid_height * cell_size), 'white')
         draw = ImageDraw.Draw(img)
-        # Draw background first
         if background and "boxes" in background:
             bg_boxes = background["boxes"]
             bg_default = background.get('default_color', 0)
@@ -153,7 +152,6 @@ class StickFigureAnimation:
                     x1 = x0 + cell_size
                     y1 = y0 + cell_size
                     draw.rectangle([x0, y0, x1, y1], fill=color, outline=(180,180,180))
-        # Draw stick figure over background
         boxes = frame['boxes']
         for row in range(grid_height):
             for col in range(grid_width):
@@ -185,14 +183,17 @@ class StickFigureAnimation:
     def run_animation_gui(self):
         root = tk.Tk()
         root.title("Stick Figure Animation Editor & Player")
+        root.rowconfigure(0, weight=1)
+        root.columnconfigure(0, weight=1)
 
         main_frame = tk.Frame(root)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.grid(row=0, column=0, sticky="nsew")
 
-        canvas_width = (self.grid_width or 120) * self.cell_size
-        canvas_height = (self.grid_height or 72) * self.cell_size
-        canvas = tk.Canvas(main_frame, width=canvas_width, height=canvas_height, bg='white')
-        canvas.pack(side=tk.TOP)
+        # Canvas and resizability logic
+        canvas_frame = tk.Frame(main_frame)
+        canvas_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(canvas_frame, bg='white')
+        canvas.pack(fill=tk.BOTH, expand=True)
 
         # Button frame
         btn_frame = tk.Frame(main_frame)
@@ -203,6 +204,7 @@ class StickFigureAnimation:
         frame_listbox.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
         running = {'flag': False, 'loop': False}
+        current_cell_size = [self.cell_size]  # Mutable to be shared
 
         def get_frame_label(idx):
             name = self.frame_names[idx] if idx < len(self.frame_names) else f"Frame_{idx+1}.json"
@@ -219,7 +221,7 @@ class StickFigureAnimation:
                 return
             frame = self.frames[idx]
             background = self.backgrounds[idx] if idx < len(self.backgrounds) else None
-            self.draw_frame_on_canvas(canvas, frame, background)
+            self.draw_frame_on_canvas(canvas, frame, background, cell_size=current_cell_size[0])
 
         def on_listbox_select(evt):
             idxs = frame_listbox.curselection()
@@ -352,12 +354,33 @@ class StickFigureAnimation:
 
         frame_listbox.bind("<Double-Button-1>", on_double_click)
 
+        # Redraw animation whenever window is resized
+        def resize_canvas(event):
+            # Only recalculate if grid size known and frames present
+            if self.grid_width and self.grid_height and self.frames:
+                new_width = event.width
+                new_height = event.height
+                cell_size_w = new_width // self.grid_width
+                cell_size_h = new_height // self.grid_height
+                cell_size = max(1, min(cell_size_w, cell_size_h))
+                current_cell_size[0] = cell_size
+                # force canvas to be a multiple of cell size
+                canvas.config(width=self.grid_width * cell_size,
+                              height=self.grid_height * cell_size)
+                idx = frame_listbox.curselection()
+                idx = idx[0] if idx else 0
+                draw_frame_index(idx)
+
+        canvas.bind("<Configure>", resize_canvas)
+        canvas.update_idletasks()
+
         # Draw first frame if available
         if self.frames:
             draw_frame_index(0)
             update_listbox()
 
         root.mainloop()
+
 
 if __name__ == "__main__":
     anim = StickFigureAnimation()
