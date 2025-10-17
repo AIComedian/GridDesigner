@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import simpledialog, messagebox, filedialog
+from tkinter import simpledialog, messagebox, filedialog, colorchooser
 import interactivegrid
 import json
 import os
@@ -20,10 +20,13 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
         self.save_button.pack(side=tk.LEFT)
         self.import_button = tk.Button(self.button_frame, text="Import Template", command=self.import_template)
         self.import_button.pack(side=tk.LEFT)
+        self.color_button = tk.Button(self.button_frame, text="Set Figure Color", command=self.choose_color)
+        self.color_button.pack(side=tk.LEFT)
 
         # Call InteractiveGrid with main_frame as parent, so canvas is below buttons
         super().__init__(self.main_frame, grid_width, grid_height, cell_size, default_color)
 
+        self.stick_figure_color = "black"  # Default color, can be changed with color picker
         self.joint_names = [
             'head_c', 'neck', 'shoulder', 'l_shoulder', 'r_shoulder',
             'hip', 'l_hip', 'r_hip',
@@ -40,6 +43,12 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
             self.load_default_template()
         self.draw_grid()
         self.canvas.bind("<Button-1>", self.on_click)
+
+    def choose_color(self):
+        color = colorchooser.askcolor(title="Choose stick figure color")
+        if color and color[1]:
+            self.stick_figure_color = color[1]
+            self.draw_grid()
 
     def load_default_template(self):
         # Import stickfigure.py and use its standing pose as template
@@ -90,6 +99,11 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
                     self.special_squares[(row, col)] = 1
                 else:
                     self.special_squares[(row, col)] = 0
+        # Load stick figure color if present
+        if "stick_figure_color" in template:
+            self.stick_figure_color = template["stick_figure_color"]
+        else:
+            self.stick_figure_color = "black"
 
     def draw_grid(self):
         self.canvas.delete("all")
@@ -101,7 +115,7 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
                 elif self.grid[row][col] == self.default_color:
                     color = 'white' if self.default_color == 0 else 'black'
                 else:
-                    color = 'black' if self.default_color == 0 else 'white'
+                    color = self.stick_figure_color  # Use chosen color for figure
                 x0 = col * self.cell_size
                 y0 = row * self.cell_size
                 x1 = x0 + self.cell_size
@@ -183,6 +197,7 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
             'default_color': self.default_color,
             'grid_width': self.grid_width,
             'grid_height': self.grid_height,
+            'stick_figure_color': self.stick_figure_color,  # <--- save color
         }
         filename = stick_name
         if not filename.endswith('.json'):

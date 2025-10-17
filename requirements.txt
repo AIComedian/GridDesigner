@@ -1,3 +1,5 @@
 tkinter
 PIL
 imageio
+Pillow
+imageio

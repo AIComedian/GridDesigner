@@ -85,6 +85,12 @@ class StickFigureAnimation:
         self.grid_height = self.frames[0].get('grid_height', self.grid_height)
         self.default_color = self.frames[0].get('default_color', self.default_color)
 
+    def hex_to_rgb(hex_color):
+        """Convert hex color string to RGB tuple."""
+        hex_color = hex_color.lstrip('#')
+        lv = len(hex_color)
+        return tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
+
     def draw_frame_on_canvas(self, canvas, frame, background=None, cell_size=None):
         canvas.delete("all")
         grid_width = frame['grid_width']
@@ -121,6 +127,10 @@ class StickFigureAnimation:
                     color = 'black' if (val != 0) else 'white'
                     if default_color == 1:
                         color = 'white' if (val == 0) else 'black'
+
+                    if 'stick_figure_color' in frame:
+                        color = frame['stick_figure_color']
+
                     x0 = col * cell_size
                     y0 = row * cell_size
                     x1 = x0 + cell_size
