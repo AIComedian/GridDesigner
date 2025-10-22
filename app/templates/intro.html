@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GridDesigner — Intro</title>
+    <style>
+      body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin: 32px; }
+      button { padding: 8px 14px; font-size: 14px; }
+      .nav { margin-top: 18px; }
+    </style>
+  </head>
+  <body>
+    <h1>GridDesigner</h1>
+    <p>Welcome — this local web interface can launch the desktop Stick Figure Animation GUI that lives in the repository.</p>
+    <p>To open the desktop GUI, click the button below. The GUI opens as a separate window (Tkinter).</p>
+
+    <form action="{{ url_for('launch_gui') }}" method="post" style="display:inline;">
+      <button type="submit">Open Desktop GUI</button>
+    </form>
+
+    <div class="nav">
+      <a href="{{ url_for('gui_page') }}">Open the small control page (status / launch)</a>
+    </div>
+
+    <hr />
+    <h3>Notes</h3>
+    <ul>
+      <li>The GUI is started in a separate process using the same Python interpreter running this server.</li>
+      <li>Make sure tkinter and required Python packages (Pillow, imageio) are available to that interpreter.</li>
+      <li>On headless machines (no display) the GUI will fail to start.</li>
+    </ul>
+  </body>
+</html>
