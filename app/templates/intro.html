@@ -12,14 +12,9 @@
   <body>
     <h1>GridDesigner</h1>
     <p>Welcome — this local web interface can launch the desktop Stick Figure Animation GUI that lives in the repository.</p>
-    <p>To open the desktop GUI, click the button below. The GUI opens as a separate window (Tkinter).</p>
-
-    <form action="{{ url_for('launch_gui') }}" method="post" style="display:inline;">
-      <button type="submit">Open Desktop GUI</button>
-    </form>
 
     <div class="nav">
-      <a href="{{ url_for('gui_page') }}">Open the small control page (status / launch)</a>
+      <a href="{{ url_for('animation_gui') }}">Open the animation GUI control page</a>
     </div>
 
     <hr />

@@ -1,8 +1,14 @@
+# (Modified) setstickfigure.py
+# - Adds viewport controls and a compute_viewport helper used for preview cropping.
+# - draw_grid is updated to draw only the current viewport when preview mode is active.
+# - Keeps saving format compatible with existing frames, including 'stick_figure_color'.
+
 import tkinter as tk
 from tkinter import simpledialog, messagebox, filedialog, colorchooser
 import interactivegrid
 import json
 import os
+import math
 
 class SetStickFigure(interactivegrid.InteractiveGrid):
     def __init__(self, root, grid_width=120, grid_height=72, cell_size=10, default_color=0, stick_figure_template=None):
@@ -22,6 +28,22 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
         self.import_button.pack(side=tk.LEFT)
         self.color_button = tk.Button(self.button_frame, text="Set Figure Color", command=self.choose_color)
         self.color_button.pack(side=tk.LEFT)
+
+        # Viewport controls (preview)
+        self.viewport_frame = tk.Frame(self.button_frame)
+        self.viewport_frame.pack(side=tk.LEFT, padx=10)
+        tk.Label(self.viewport_frame, text="Viewport:").pack(side=tk.LEFT)
+        self.viewport_mode_var = tk.StringVar(value='full')
+        self.viewport_menu = tk.OptionMenu(self.viewport_frame, self.viewport_mode_var, 'full', 'half', 'stick-figure')
+        self.viewport_menu.pack(side=tk.LEFT)
+        tk.Label(self.viewport_frame, text="Pad:").pack(side=tk.LEFT)
+        self.viewport_pad_var = tk.IntVar(value=2)
+        self.viewport_pad_spin = tk.Spinbox(self.viewport_frame, from_=0, to=50, width=3, textvariable=self.viewport_pad_var)
+        self.viewport_pad_spin.pack(side=tk.LEFT)
+        tk.Label(self.viewport_frame, text="MinW:").pack(side=tk.LEFT)
+        self.viewport_minw_var = tk.IntVar(value=16)
+        self.viewport_minw_spin = tk.Spinbox(self.viewport_frame, from_=4, to=500, width=4, textvariable=self.viewport_minw_var)
+        self.viewport_minw_spin.pack(side=tk.LEFT)
 
         # Call InteractiveGrid with main_frame as parent, so canvas is below buttons
         super().__init__(self.main_frame, grid_width, grid_height, cell_size, default_color)
@@ -105,26 +127,136 @@ class SetStickFigure(interactivegrid.InteractiveGrid):
         else:
             self.stick_figure_color = "black"
 
+    # ---------- Local compute_viewport for preview ----------
+    def compute_viewport_for_current_grid(self, mode=None, padding=None, min_w=None, min_h=None):
+        """
+        Compute viewport (x0, y0, w, h) based on current grid contents and UI actions.
+        This duplicates the logic in the animation code so preview matches exported viewport.
+        """
+        mode = mode or self.viewport_mode_var.get()
+        padding = self.viewport_pad_var.get() if padding is None else padding
+        min_w = self.viewport_minw_var.get() if min_w is None else min_w
+        min_h = max(4, self.cell_size) if min_h is None else min_h  # fallback
+
+        gw = self.grid_width
+        gh = self.grid_height
+
+        if mode == 'full':
+            return (0, 0, gw, gh)
+        elif mode == 'half':
+            w = max(1, gw // 2)
+            h = max(1, gh // 2)
+            x0 = max(0, (gw - w) // 2)
+            y0 = max(0, (gh - h) // 2)
+            return (x0, y0, w, h)
+        elif mode == 'stick-figure':
+            # detect all non-default squares
+            xs, ys = [], []
+            for r in range(gh):
+                for c in range(gw):
+                    if self.grid[r][c] != self.default_color:
+                        xs.append(c)
+                        ys.append(r)
+            if not xs:
+                # center a min viewport
+                w = min(gw, min_w)
+                h = min(gh, min_h)
+                x0 = max(0, (gw - w) // 2)
+                y0 = max(0, (gh - h) // 2)
+                return (x0, y0, w, h)
+
+            min_x = min(xs)
+            max_x = max(xs)
+            min_y = min(ys)
+            max_y = max(ys)
+            x0 = max(0, min_x - padding)
+            x1 = min(gw - 1, max_x + padding)
+            y0 = max(0, min_y - padding)
+            y1 = min(gh - 1, max_y + padding)
+
+            w = x1 - x0 + 1
+            h = y1 - y0 + 1
+
+            if w < min_w:
+                extra = min_w - w
+                left = extra // 2
+                right = extra - left
+                x0 = max(0, x0 - left)
+                x1 = min(gw - 1, x1 + right)
+                w = x1 - x0 + 1
+            if h < min_h:
+                extra = min_h - h
+                top = extra // 2
+                bottom = extra - top
+                y0 = max(0, y0 - top)
+                y1 = min(gh - 1, y1 + bottom)
+                h = y1 - y0 + 1
+
+            w = min(w, gw)
+            h = min(h, gh)
+            x0 = max(0, min(x0, gw - w))
+            y0 = max(0, min(y0, gh - h))
+            return (x0, y0, w, h)
+        else:
+            return (0, 0, gw, gh)
+
     def draw_grid(self):
-        self.canvas.delete("all")
-        for row in range(self.grid_height):
-            for col in range(self.grid_width):
-                key = (row, col)
-                if self.special_squares.get(key, 0) == 1:
-                    color = 'red'
-                elif self.grid[row][col] == self.default_color:
-                    color = 'white' if self.default_color == 0 else 'black'
-                else:
-                    color = self.stick_figure_color  # Use chosen color for figure
-                x0 = col * self.cell_size
-                y0 = row * self.cell_size
-                x1 = x0 + self.cell_size
-                y1 = y0 + self.cell_size
-                self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline='gray')
+        # If preview viewport is enabled (via UI), draw only the viewport region, scaled to canvas
+        viewport_mode = self.viewport_mode_var.get()
+        if viewport_mode == 'full':
+            # original behaviour: draw entire grid each cell = self.cell_size
+            self.canvas.delete("all")
+            for row in range(self.grid_height):
+                for col in range(self.grid_width):
+                    key = (row, col)
+                    if self.special_squares.get(key, 0) == 1:
+                        color = 'red'
+                    elif self.grid[row][col] == self.default_color:
+                        color = 'white' if self.default_color == 0 else 'black'
+                    else:
+                        color = self.stick_figure_color  # Use chosen color for figure
+                    x0 = col * self.cell_size
+                    y0 = row * self.cell_size
+                    x1 = x0 + self.cell_size
+                    y1 = y0 + self.cell_size
+                    self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline='gray')
+            # keep canvas size consistent with full grid
+            self.canvas.config(width=self.grid_width * self.cell_size, height=self.grid_height * self.cell_size)
+        else:
+            # compute viewport and draw a cropped preview
+            viewport = self.compute_viewport_for_current_grid()
+            x0, y0, w, h = viewport
+            # optionally determine a preview cell size so canvas isn't huge. We'll keep original cell_size
+            # but set canvas pixel size to viewport dims * cell_size
+            self.canvas.delete("all")
+            self.canvas.config(width=w * self.cell_size, height=h * self.cell_size)
+            for row in range(y0, y0 + h):
+                for col in range(x0, x0 + w):
+                    key = (row, col)
+                    if self.special_squares.get(key, 0) == 1:
+                        color = 'red'
+                    elif self.grid[row][col] == self.default_color:
+                        color = 'white' if self.default_color == 0 else 'black'
+                    else:
+                        color = self.stick_figure_color
+                    x_pixel = (col - x0) * self.cell_size
+                    y_pixel = (row - y0) * self.cell_size
+                    self.canvas.create_rectangle(x_pixel, y_pixel, x_pixel + self.cell_size, y_pixel + self.cell_size, fill=color, outline='gray')
 
     def on_click(self, event):
         col = event.x // self.cell_size
         row = event.y // self.cell_size
+
+        # If viewport cropping is active we need to map click coordinates back to grid coordinates
+        viewport_mode = self.viewport_mode_var.get()
+        if viewport_mode != 'full':
+            x0, y0, w, h = self.compute_viewport_for_current_grid()
+            # map click within canvas viewport to grid coordinates
+            if not (0 <= event.x < w * self.cell_size and 0 <= event.y < h * self.cell_size):
+                return
+            col = (event.x // self.cell_size) + x0
+            row = (event.y // self.cell_size) + y0
+
         key = (row, col)
         if not (0 <= row < self.grid_height and 0 <= col < self.grid_width):
             return
@@ -214,5 +346,4 @@ if __name__ == "__main__":
     root.title("Set Stick Figure (Manual Joint Assignment)")
     set_stick = SetStickFigure(root)
 
-    print()
     root.mainloop()

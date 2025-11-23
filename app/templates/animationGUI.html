@@ -2,10 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>GridDesigner — Launch GUI</title>
+    <title>GridDesigner — Animation GUI Launcher</title>
     <style>
       body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin: 32px; }
-      button { padding: 8px 12px; font-size: 14px; }
+      button { padding: 8px 12px; font-size: 14px; margin-right: 8px; }
       #status { margin-top: 12px; }
     </style>
   </head>
@@ -13,14 +13,14 @@
     <h1>Animation GUI Launcher</h1>
 
     <p>
-      Use the button below to start the desktop Tkinter GUI. If the GUI is already running you'll see its status.
+      Use the button below to start the desktop Tkinter GUI. If the GUI is already running you'll see its status below.
     </p>
 
-    <button id="launchBtn">Start / Open GUI</button>
+    <button id="launchBtn">Start / Open Desktop GUI</button>
     <button id="refreshBtn">Refresh Status</button>
 
     <div id="status">
-      Status: <span id="running">unknown</span>
+      Status: <strong id="running">unknown</strong>
       <br/>PID: <span id="pid">-</span>
     </div>
 
@@ -40,7 +40,6 @@
 
       document.getElementById("launchBtn").addEventListener("click", async function () {
         try {
-          // POST to /launch (we use a fetch so the page does not redirect)
           await fetch("/launch", { method: "POST" });
           // give the process a moment to start, then refresh status
           setTimeout(refreshStatus, 400);
