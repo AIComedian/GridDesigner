@@ -1,14 +1,28 @@
 """
-Modified stickfigureanimation.py
+stickfigureanimation.py
 
-- Adds viewport modes: 'full', 'half', 'stick-figure' (auto crop to content) but does NOT auto-scale to window.
-- Adds option to "Lock to animation bounds" to compute a single global viewport that covers all frames.
-- draw_frame_on_canvas and draw_frame_to_image accept an explicit viewport (x0, y0, w, h) and draw/crop using that.
-- Export uses the locked/global viewport when lock_viewport is True; otherwise it uses per-frame viewport.
-- Keeps a fixed cell_size for rendering and export (no automatic cell-size scaling).
-- Includes comments to make it easy for other developers to continue.
+Extended from the interactive editor/player to add a "headless" animation player
+interface that other modules (or an LLM-driven controller) can import and call.
 
-Usage: replace the existing stickfigureanimation.py with this file.
+Features added here:
+- All previous editor/player functionality is retained (run_animation_gui).
+- New method play_animation_window(...) launches a minimal window that only
+  displays the animation (no buttons, no frame list). This is suitable for
+  embedding into an AI service that needs to present an animation on demand.
+- play_animation_window accepts parameters to adjust cell size, looping, and
+  whether to lock viewport to the union of all frames.
+- The default minimal player sets the viewport mode to 'stick-figure' and
+  locks to animation bounds to avoid camera jitter when playing small movements.
+- Detailed comments added throughout to make it easy for other developers to
+  follow and extend.
+
+Usage (example at bottom):
+- Import the module and call:
+    anim = StickFigureAnimation()
+    anim.load_animation("animation1.json")
+    anim.play_animation_window(cell_size=8, loop=True)
+
+Note: This file keeps rendering cell_size fixed (no automatic autoscale to host window).
 """
 
 import json
@@ -20,30 +34,30 @@ import imageio
 
 class StickFigureAnimation:
     def __init__(self):
-        # animation data
-        self.frames = []         # List[dict] each dict is a frame (boxes, grid_width, grid_height, default_color)
-        self.timings = []        # List[int] durations in ms
-        self.backgrounds = []    # List[Optional[dict]] backgrounds per frame
-        self.frame_names = []    # filenames for frames
+        # Animation data containers
+        self.frames = []         # List[dict] - each frame dict contains 'boxes', 'grid_width', 'grid_height', etc.
+        self.timings = []        # List[int] durations per frame in ms
+        self.backgrounds = []    # List[Optional[dict]] per-frame background data
+        self.frame_names = []    # Filenames or labels for frames
         self.background_names = []
 
-        # grid metadata (will be read from frames)
+        # Grid metadata - kept in sync when frames are added/loaded
         self.grid_width = None
         self.grid_height = None
         self.default_color = 0
 
-        # rendering configuration
-        self.cell_size = 10  # kept fixed; we DO NOT auto-scale to window per your request
+        # Rendering config - kept fixed by design (no automatic window autoscale)
+        self.cell_size = 10
 
-        # viewport configuration
-        # mode: 'full' (show entire grid), 'half' (center half of grid), 'stick-figure' (crop to content)
+        # Viewport configuration:
+        # mode: 'full'|'half'|'stick-figure'
+        # stick-figure = crop tightly to content (plus padding)
         self.viewport_mode = 'full'
         self.viewport_padding = 2
         self.viewport_min_w = 16
         self.viewport_min_h = 16
 
-        # locking behavior: if True compute a single viewport that covers all frames (prevents camera jumps)
-        # default True to avoid per-frame jitter
+        # When True compute one viewport covering all frames (union) to avoid camera jumps
         self.lock_viewport = True
 
     # -------------------------
@@ -64,13 +78,13 @@ class StickFigureAnimation:
         else:
             self.backgrounds.append(None)
             self.background_names.append("")
-        # update grid meta from frame
+        # update grid metadata
         self.grid_width = frame_data.get('grid_width', self.grid_width)
         self.grid_height = frame_data.get('grid_height', self.grid_height)
         self.default_color = frame_data.get('default_color', self.default_color)
 
     def load_animation_from_jsons(self, json_files, timings=None, background_jsons=None):
-        """Load multiple frames from JSON files (clears any existing animation)."""
+        """Load multiple frames from JSON files, clearing existing animation data."""
         self.frames = []
         self.timings = []
         self.backgrounds = []
@@ -98,14 +112,13 @@ class StickFigureAnimation:
                 self.background_names.append("")
 
     def save_animation(self, filename):
-        """Save entire animation (including viewport settings)."""
+        """Save animation data and viewport settings to a single JSON file."""
         animation_data = {
             "frames": self.frames,
             "timings": self.timings,
             "backgrounds": self.backgrounds,
             "frame_names": self.frame_names,
             "background_names": self.background_names,
-            # persist viewport settings
             "viewport_mode": self.viewport_mode,
             "viewport_padding": self.viewport_padding,
             "viewport_min_w": self.viewport_min_w,
@@ -116,21 +129,20 @@ class StickFigureAnimation:
             json.dump(animation_data, f, indent=2)
 
     def load_animation(self, filename):
-        """Load an animation saved by save_animation."""
+        """Load an animation previously saved with save_animation."""
         with open(filename, "r") as f:
             data = json.load(f)
         self.frames = data["frames"]
         self.timings = data["timings"]
-        self.backgrounds = data.get("backgrounds", [None]*len(self.frames))
+        self.backgrounds = data.get("backgrounds", [None] * len(self.frames))
         self.frame_names = data.get("frame_names", [f"Frame_{i+1}.json" for i in range(len(self.frames))])
-        self.background_names = data.get("background_names", [""]*len(self.frames))
+        self.background_names = data.get("background_names", [""] * len(self.frames))
         # load viewport settings if present
         self.viewport_mode = data.get("viewport_mode", self.viewport_mode)
         self.viewport_padding = data.get("viewport_padding", self.viewport_padding)
         self.viewport_min_w = data.get("viewport_min_w", self.viewport_min_w)
         self.viewport_min_h = data.get("viewport_min_h", self.viewport_min_h)
         self.lock_viewport = data.get("lock_viewport", self.lock_viewport)
-
         # update grid metadata from first frame
         if self.frames:
             self.grid_width = self.frames[0].get('grid_width', self.grid_width)
@@ -139,25 +151,22 @@ class StickFigureAnimation:
 
     @staticmethod
     def hex_to_rgb(hex_color):
-        """Convert hex color string to RGB tuple (utility)."""
+        """Convert hex such as '#rrggbb' to an (r,g,b) tuple."""
         hex_color = hex_color.lstrip('#')
         lv = len(hex_color)
         return tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
 
     # -------------------------
-    # Viewport computation
+    # Viewport calculation
     # -------------------------
     def compute_viewport(self, frame, mode=None, padding=None, min_w=None, min_h=None):
         """
-        Compute viewport (x0, y0, w, h) for a single frame.
+        Compute a rectangular viewport for a single frame.
 
-        Parameters:
-          frame: frame dict
-          mode: overrides self.viewport_mode if provided
-          padding/min_w/min_h: optional overrides
-
-        Returns:
-          tuple(x0, y0, w, h) in grid cell coordinates.
+        Returns (x0, y0, w, h) in grid cell coordinates.
+        - 'full' returns the entire grid
+        - 'half' returns a centered half-size viewport
+        - 'stick-figure' crops to non-default pixels with padding and minimum size
         """
         mode = mode or self.viewport_mode
         padding = self.viewport_padding if padding is None else padding
@@ -169,7 +178,6 @@ class StickFigureAnimation:
 
         if mode == 'full':
             return (0, 0, gw, gh)
-
         if mode == 'half':
             w = max(1, gw // 2)
             h = max(1, gh // 2)
@@ -177,12 +185,11 @@ class StickFigureAnimation:
             y0 = max(0, (gh - h) // 2)
             return (x0, y0, w, h)
 
-        # stick-figure mode => compute bounding box of non-default boxes in this frame
+        # stick-figure: find bounding box of boxes != default_color
         boxes = frame.get('boxes', {})
         default_color = frame.get('default_color', self.default_color)
 
-        xs = []
-        ys = []
+        xs, ys = [], []
         for key, val in boxes.items():
             try:
                 r, c = map(int, key.split(","))
@@ -192,18 +199,16 @@ class StickFigureAnimation:
                 xs.append(c)
                 ys.append(r)
 
-        # no content case: return a centered minimum viewport
         if not xs:
+            # Nothing drawn — return a centered minimal viewport
             w = min(gw, min_w)
             h = min(gh, min_h)
             x0 = max(0, (gw - w) // 2)
             y0 = max(0, (gh - h) // 2)
             return (x0, y0, w, h)
 
-        min_x = min(xs)
-        max_x = max(xs)
-        min_y = min(ys)
-        max_y = max(ys)
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
 
         x0 = max(0, min_x - padding)
         x1 = min(gw - 1, max_x + padding)
@@ -213,7 +218,7 @@ class StickFigureAnimation:
         w = x1 - x0 + 1
         h = y1 - y0 + 1
 
-        # enforce minimum size by expanding symmetrically when possible
+        # Enforce minimum viewport size by symmetric expansion where possible
         if w < min_w:
             extra = min_w - w
             left = extra // 2
@@ -229,7 +234,7 @@ class StickFigureAnimation:
             y1 = min(gh - 1, y1 + bottom)
             h = y1 - y0 + 1
 
-        # final clamp
+        # Final clamps
         w = min(w, gw)
         h = min(h, gh)
         x0 = max(0, min(x0, gw - w))
@@ -239,14 +244,11 @@ class StickFigureAnimation:
 
     def compute_global_viewport(self, frames=None, padding=None, min_w=None, min_h=None):
         """
-        Compute a single viewport covering the union of content from all frames.
-        This prevents the camera jumping when content moves slightly between frames.
-
-        Returns (x0, y0, w, h).
+        Compute a single viewport that covers the union of all frames' content.
+        Useful to avoid per-frame camera jumps when the subject moves slightly.
         """
         frames = frames or self.frames
         if not frames:
-            # fallback to full of known grid size (or zeros)
             gw = self.grid_width or 0
             gh = self.grid_height or 0
             return (0, 0, gw, gh)
@@ -269,8 +271,7 @@ class StickFigureAnimation:
             boxes = frame.get('boxes', {})
             default_color = frame.get('default_color', self.default_color)
 
-            xs = []
-            ys = []
+            xs, ys = [], []
             for key, val in boxes.items():
                 try:
                     r, c = map(int, key.split(","))
@@ -281,10 +282,8 @@ class StickFigureAnimation:
                     ys.append(r)
             if not xs:
                 continue
-            fmin_c = min(xs)
-            fmax_c = max(xs)
-            fmin_r = min(ys)
-            fmax_r = max(ys)
+            fmin_c, fmax_c = min(xs), max(xs)
+            fmin_r, fmax_r = min(ys), max(ys)
 
             if min_c is None or fmin_c < min_c:
                 min_c = fmin_c
@@ -295,7 +294,7 @@ class StickFigureAnimation:
             if max_r is None or fmax_r > max_r:
                 max_r = fmax_r
 
-        # if no content found across all frames, return centered minimum/full
+        # nothing found across all frames
         if min_c is None:
             w = min(gw, min_w) if gw else min_w
             h = min(gh, min_h) if gh else min_h
@@ -303,7 +302,7 @@ class StickFigureAnimation:
             y0 = max(0, (gh - h) // 2) if gh else 0
             return (x0, y0, w, h)
 
-        # apply padding
+        # apply padding then enforce minimums and clamps (same logic as single-frame)
         x0 = max(0, min_c - padding)
         x1 = min(gw - 1, max_c + padding)
         y0 = max(0, min_r - padding)
@@ -312,7 +311,6 @@ class StickFigureAnimation:
         w = x1 - x0 + 1
         h = y1 - y0 + 1
 
-        # enforce minimums
         if w < min_w:
             extra = min_w - w
             left = extra // 2
@@ -328,7 +326,6 @@ class StickFigureAnimation:
             y1 = min(gh - 1, y1 + bottom)
             h = y1 - y0 + 1
 
-        # final clamp
         w = min(w, gw)
         h = min(h, gh)
         x0 = max(0, min(x0, gw - w))
@@ -337,71 +334,64 @@ class StickFigureAnimation:
         return (x0, y0, w, h)
 
     # -------------------------
-    # Drawing functions (canvas + image)
+    # Drawing functions
     # -------------------------
     def draw_frame_on_canvas(self, canvas, frame, background=None, cell_size=None, viewport=None):
         """
-        Draw a frame to a Tk Canvas using a viewport.
-
-        viewport: (x0, y0, w, h) in grid coordinates. If None, compute using self.compute_viewport(frame).
-        cell_size: pixel size per cell. Defaults to self.cell_size.
-
-        Important: This does NOT auto-scale to window size. canvas size is set to match viewport * cell_size.
+        Draw a frame on a Tk canvas according to the provided viewport.
+        canvas size will be set to viewport_size * cell_size so drawing area exactly matches viewport.
         """
         canvas.delete("all")
         cell_size = cell_size or self.cell_size
 
-        # compute viewport if not given
         if viewport is None:
             viewport = self.compute_viewport(frame)
         x0, y0, w, h = viewport
 
-        # Set canvas pixel size to viewport size * cell_size so the canvas shows exactly the viewport
+        # Make canvas exactly the viewport size (no autoscaling)
         canvas.config(width=w * cell_size, height=h * cell_size)
 
-        # Draw background (if any) limited to viewport
+        # Draw background cells inside viewport (if given)
         if background and "boxes" in background:
             bg_boxes = background["boxes"]
             bg_default = background.get('default_color', 0)
             for row in range(y0, y0 + h):
                 for col in range(x0, x0 + w):
-                    box_key = f"{row},{col}"
-                    if box_key in bg_boxes:
-                        val = bg_boxes[box_key]
+                    key = f"{row},{col}"
+                    if key in bg_boxes:
+                        val = bg_boxes[key]
                         color = 'black' if (val != 0) else 'white'
                         if bg_default == 1:
                             color = 'white' if (val == 0) else 'black'
                     else:
                         color = 'white' if bg_default == 0 else 'black'
-                    x_pixel = (col - x0) * cell_size
-                    y_pixel = (row - y0) * cell_size
-                    canvas.create_rectangle(x_pixel, y_pixel, x_pixel + cell_size, y_pixel + cell_size, fill=color, outline='gray')
+                    px = (col - x0) * cell_size
+                    py = (row - y0) * cell_size
+                    canvas.create_rectangle(px, py, px + cell_size, py + cell_size, fill=color, outline='gray')
 
-        # Draw frame's boxes limited to viewport
+        # Draw frame boxes inside viewport
         boxes = frame.get('boxes', {})
         default_color = frame.get('default_color', 0)
-        sf_color = frame.get('stick_figure_color', None)  # optional override
+        sf_color = frame.get('stick_figure_color', None)
         for row in range(y0, y0 + h):
             for col in range(x0, x0 + w):
-                box_key = f"{row},{col}"
-                if box_key in boxes:
-                    val = boxes[box_key]
+                key = f"{row},{col}"
+                if key in boxes:
+                    val = boxes[key]
                     color = 'black' if (val != 0) else 'white'
                     if default_color == 1:
                         color = 'white' if (val == 0) else 'black'
                     if sf_color:
                         color = sf_color
-                    x_pixel = (col - x0) * cell_size
-                    y_pixel = (row - y0) * cell_size
-                    canvas.create_rectangle(x_pixel, y_pixel, x_pixel + cell_size, y_pixel + cell_size, fill=color, outline='gray')
+                    px = (col - x0) * cell_size
+                    py = (row - y0) * cell_size
+                    canvas.create_rectangle(px, py, px + cell_size, py + cell_size, fill=color, outline='gray')
 
     def draw_frame_to_image(self, frame, background=None, cell_size=None, viewport=None):
         """
-        Draw a frame to a PIL Image using a viewport.
-        Returns a PIL.Image.
+        Draw a frame to a PIL.Image using the viewport. The image size is viewport * cell_size.
         """
         cell_size = cell_size or self.cell_size
-
         if viewport is None:
             viewport = self.compute_viewport(frame)
         x0, y0, w, h = viewport
@@ -409,85 +399,211 @@ class StickFigureAnimation:
         img = Image.new('RGB', (w * cell_size, h * cell_size), 'white')
         draw = ImageDraw.Draw(img)
 
-        # Draw background limited to viewport
+        # draw background
         if background and "boxes" in background:
             bg_boxes = background["boxes"]
             bg_default = background.get('default_color', 0)
             for row in range(y0, y0 + h):
                 for col in range(x0, x0 + w):
-                    box_key = f"{row},{col}"
-                    if box_key in bg_boxes:
-                        val = bg_boxes[box_key]
-                        color = (0,0,0) if (val != 0) else (255,255,255)
+                    key = f"{row},{col}"
+                    if key in bg_boxes:
+                        val = bg_boxes[key]
+                        color = (0, 0, 0) if (val != 0) else (255, 255, 255)
                         if bg_default == 1:
-                            color = (255,255,255) if (val == 0) else (0,0,0)
+                            color = (255, 255, 255) if (val == 0) else (0, 0, 0)
                     else:
-                        color = (255,255,255) if bg_default == 0 else (0,0,0)
-                    x0p = (col - x0) * cell_size
-                    y0p = (row - y0) * cell_size
-                    draw.rectangle([x0p, y0p, x0p + cell_size, y0p + cell_size], fill=color, outline=(180,180,180))
+                        color = (255, 255, 255) if bg_default == 0 else (0, 0, 0)
+                    xpix = (col - x0) * cell_size
+                    ypix = (row - y0) * cell_size
+                    draw.rectangle([xpix, ypix, xpix + cell_size, ypix + cell_size], fill=color, outline=(180, 180, 180))
 
-        # Draw frame boxes limited to viewport
+        # draw frame boxes
         boxes = frame.get('boxes', {})
         default_color = frame.get('default_color', 0)
         sf_color = frame.get('stick_figure_color', None)
         for row in range(y0, y0 + h):
             for col in range(x0, x0 + w):
-                box_key = f"{row},{col}"
-                if box_key in boxes:
-                    val = boxes[box_key]
-                    color = (0,0,0) if (val != 0) else (255,255,255)
+                key = f"{row},{col}"
+                if key in boxes:
+                    val = boxes[key]
+                    color = (0, 0, 0) if (val != 0) else (255, 255, 255)
                     if default_color == 1:
                         color = (255,255,255) if (val == 0) else (0,0,0)
-                    x0p = (col - x0) * cell_size
-                    y0p = (row - y0) * cell_size
+                    xpix = (col - x0) * cell_size
+                    ypix = (row - y0) * cell_size
+                    # Determine draw color when stick_figure_color present
                     if sf_color:
-                        # If stick_figure_color is present, prefer that (convert hex or named color to RGB)
                         if isinstance(sf_color, str) and sf_color.startswith('#'):
                             draw_color = self.hex_to_rgb(sf_color)
                         else:
-                            # support simple names like 'black'/'white' for now
-                            draw_color = (0,0,0) if sf_color.lower() == 'black' else (255,255,255)
+                            draw_color = (0,0,0) if str(sf_color).lower() == 'black' else (255,255,255)
                     else:
                         draw_color = color
-                    draw.rectangle([x0p, y0p, x0p + cell_size, y0p + cell_size], fill=draw_color, outline=(180,180,180))
-
+                    draw.rectangle([xpix, ypix, xpix + cell_size, ypix + cell_size], fill=draw_color, outline=(180, 180, 180))
         return img
 
     # -------------------------
-    # Export
+    # Export to video
     # -------------------------
     def export_to_video(self, filename="animation.mp4", fps=5):
         """
-        Export animation to an MP4. If lock_viewport is True, compute a single viewport that
-        covers all frames; otherwise compute a per-frame viewport.
-        Uses fixed self.cell_size (no auto-scaling).
+        Export animation frames to a video (MP4). Uses self.cell_size (no autoscaling).
+        If lock_viewport is True a global viewport is used for all frames.
         """
         images = []
-
-        # Precompute global viewport if requested
         global_viewport = None
         if self.lock_viewport:
             global_viewport = self.compute_global_viewport(self.frames)
 
         for i, frame in enumerate(self.frames):
-            background = self.backgrounds[i] if i < len(self.backgrounds) else None
+            bg = self.backgrounds[i] if i < len(self.backgrounds) else None
             viewport = global_viewport if global_viewport is not None else self.compute_viewport(frame)
-            img = self.draw_frame_to_image(frame, background, cell_size=self.cell_size, viewport=viewport)
+            img = self.draw_frame_to_image(frame, bg, cell_size=self.cell_size, viewport=viewport)
             frame_duration = int(self.timings[i])
             repeats = max(1, int((fps * frame_duration) / 1000))
             for _ in range(repeats):
                 images.append(img.copy())
-
-        # Write out using imageio
+        # write video
         imageio.mimsave(filename, images, fps=fps)
         return True
 
     # -------------------------
-    # GUI: animation editor & player
+    # Minimal animation-only window (new)
+    # -------------------------
+    def play_animation_window(self, animation_filename=None, cell_size=None, loop=False, fps=None, viewport_mode='stick-figure', lock_viewport=True):
+        """
+        Launch a minimal window that only plays the animation (no GUI controls).
+        - animation_filename: optional path to an animation JSON saved by save_animation() or a single frame JSON.
+            If provided, this method will load the animation before playing.
+            If None, assumes frames are already loaded into the object.
+        - cell_size: integer pixel size per grid cell; if None uses self.cell_size
+        - loop: if True, loop the animation indefinitely
+        - fps: optional export-ish frames-per-second. This method uses per-frame durations in self.timings for timing.
+               If provided, it will be used only when durations are missing; otherwise timings[] control durations.
+        - viewport_mode: one of 'full','half','stick-figure' - default 'stick-figure'
+        - lock_viewport: if True compute global viewport and use it for entire playback (recommended)
+        This function blocks until the animation window is closed. It is intended to be called by other modules.
+        """
+        # Load animation file if provided
+        if animation_filename:
+            # Support either complete animation JSON or single-frame JSONs
+            # Try to parse as animation (saved collection) first
+            try:
+                with open(animation_filename, 'r') as f:
+                    maybe = json.load(f)
+                # Heuristic: if it has 'frames' key then it's the saved animation bundle
+                if isinstance(maybe, dict) and 'frames' in maybe:
+                    # Save to object and proceed
+                    # Use load_animation-like assignment to populate data and viewport settings
+                    self.frames = maybe.get('frames', [])
+                    self.timings = maybe.get('timings', [200] * len(self.frames))
+                    self.backgrounds = maybe.get('backgrounds', [None] * len(self.frames))
+                    self.frame_names = maybe.get('frame_names', [f"Frame_{i+1}.json" for i in range(len(self.frames))])
+                    self.background_names = maybe.get('background_names', [""] * len(self.frames))
+                    # override viewport settings from arguments or saved file
+                    self.viewport_mode = maybe.get('viewport_mode', viewport_mode)
+                    self.viewport_padding = maybe.get('viewport_padding', self.viewport_padding)
+                    self.viewport_min_w = maybe.get('viewport_min_w', self.viewport_min_w)
+                    self.viewport_min_h = maybe.get('viewport_min_h', self.viewport_min_h)
+                    self.lock_viewport = maybe.get('lock_viewport', lock_viewport)
+                    # update grid meta from first frame, if present
+                    if self.frames:
+                        self.grid_width = self.frames[0].get('grid_width', self.grid_width)
+                        self.grid_height = self.frames[0].get('grid_height', self.grid_height)
+                        self.default_color = self.frames[0].get('default_color', self.default_color)
+                else:
+                    # treat as single-frame JSON
+                    # Clear existing and add single frame
+                    with open(animation_filename, 'r') as f2:
+                        frame_data = json.load(f2)
+                    self.frames = [frame_data]
+                    self.timings = [200]
+                    self.backgrounds = [None]
+                    self.frame_names = [animation_filename.split("/")[-1]]
+                    self.grid_width = frame_data.get('grid_width', self.grid_width)
+                    self.grid_height = frame_data.get('grid_height', self.grid_height)
+                    self.default_color = frame_data.get('default_color', self.default_color)
+                    # use viewport_mode/lock_viewport provided in args
+                    self.viewport_mode = viewport_mode
+                    self.lock_viewport = lock_viewport
+            except Exception as e:
+                # If reading the file failed, raise for caller to handle
+                raise RuntimeError(f"Could not load animation file '{animation_filename}': {e}")
+
+        # Nothing to play
+        if not self.frames:
+            raise RuntimeError("No frames loaded to play. Load an animation before calling play_animation_window().")
+
+        # Apply requested settings
+        self.cell_size = self.cell_size if cell_size is None else int(cell_size)
+        self.viewport_mode = viewport_mode
+        self.lock_viewport = lock_viewport
+
+        # Determine viewport for playback
+        playback_viewport = None
+        if self.lock_viewport:
+            playback_viewport = self.compute_global_viewport(self.frames)
+        else:
+            # use stick-figure by default if caller didn't request otherwise
+            playback_viewport = self.compute_viewport(self.frames[0])
+
+        # Create a minimal Tk window and canvas sized to the viewport in pixels
+        x0, y0, vw, vh = playback_viewport
+        win = tk.Tk()
+        win.title("Animation Player")
+        canvas = tk.Canvas(win, width=vw * self.cell_size, height=vh * self.cell_size, bg='white')
+        canvas.pack()
+
+        # Play loop using after; convert frame durations (ms) -> schedule
+        running = {'flag': True}
+
+        def step(index):
+            # stop if window was closed
+            if not running['flag']:
+                return
+            if index >= len(self.frames):
+                if loop:
+                    index = 0
+                else:
+                    # finished - close the window and stop
+                    win.destroy()
+                    return
+            frame = self.frames[index]
+            bg = self.backgrounds[index] if index < len(self.backgrounds) else None
+
+            # If not locking viewport, compute per-frame viewport (but caller requested stick-figure default)
+            viewport = playback_viewport if self.lock_viewport else self.compute_viewport(frame)
+            # draw the frame
+            self.draw_frame_on_canvas(canvas, frame, background=bg, cell_size=self.cell_size, viewport=viewport)
+
+            # determine duration to next frame: prefer timings[], if missing fall back to fps if provided, else 200ms
+            duration = 200
+            if index < len(self.timings):
+                duration = int(self.timings[index])
+            elif fps:
+                duration = int(1000.0 / float(fps))
+            # schedule next
+            win.after(duration, lambda: step(index + 1))
+
+        # capture window close so we stop the playback loop gracefully
+        def on_close():
+            running['flag'] = False
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        # kick off playback
+        step(0)
+        # block here until window is closed
+        win.mainloop()
+
+    # -------------------------
+    # Full editor/player GUI (unchanged) - retained for dev convenience
     # -------------------------
     def run_animation_gui(self):
-        """Run a simple Tk GUI to add frames, choose viewport mode, play, and export."""
+        """Run the full editor/player GUI with controls (this existed previously)."""
         root = tk.Tk()
         root.title("Stick Figure Animation Editor & Player")
 
@@ -555,7 +671,7 @@ class StickFigureAnimation:
         stop_btn = tk.Button(btn_frame, text="Stop", width=12, command=lambda: stop_animation())
         stop_btn.pack(pady=2)
 
-        # utility to label frames
+        # utilities
         def get_frame_label(idx):
             name = self.frame_names[idx] if idx < len(self.frame_names) else f"Frame_{idx+1}.json"
             duration = self.timings[idx] if idx < len(self.timings) else 200
@@ -567,10 +683,8 @@ class StickFigureAnimation:
                 frame_listbox.insert(tk.END, get_frame_label(i))
 
         def draw_frame_index(idx):
-            """Draw the selected frame using viewport settings from the UI. DOES NOT auto-scale."""
             if idx < 0 or idx >= len(self.frames):
                 return
-
             # read UI viewport settings into object state
             self.viewport_mode = viewport_var.get()
             self.viewport_padding = int(padding_var.get())
@@ -579,16 +693,15 @@ class StickFigureAnimation:
             self.lock_viewport = lock_var.get()
 
             frame = self.frames[idx]
-            background = self.backgrounds[idx] if idx < len(self.backgrounds) else None
+            bg = self.backgrounds[idx] if idx < len(self.backgrounds) else None
 
-            # decide viewport: either global (locked) or per-frame
+            # choose viewport
             if self.lock_viewport and len(self.frames) > 0:
                 viewport = self.compute_global_viewport(self.frames)
             else:
                 viewport = self.compute_viewport(frame)
 
-            # draw using fixed cell_size and set canvas size accordingly
-            self.draw_frame_on_canvas(canvas, frame, background, cell_size=self.cell_size, viewport=viewport)
+            self.draw_frame_on_canvas(canvas, frame, background=bg, cell_size=self.cell_size, viewport=viewport)
 
         def on_listbox_select(evt):
             sel = frame_listbox.curselection()
@@ -597,7 +710,7 @@ class StickFigureAnimation:
 
         frame_listbox.bind("<<ListboxSelect>>", on_listbox_select)
 
-        # Button command implementations
+        # implementations for the control buttons (add, set bg, save, load, export)
         def add_frame():
             stick_path = filedialog.askopenfilename(title="Add Stick Figure Frame JSON",
                                                     filetypes=[("JSON files", "*.json")])
@@ -607,10 +720,9 @@ class StickFigureAnimation:
                                                  filetypes=[("JSON files", "*.json")])
             self.add_frame_from_json(stick_path, 200, bg_path if bg_path else None)
             update_listbox()
-            # select the newly added frame
             frame_listbox.selection_clear(0, tk.END)
-            frame_listbox.selection_set(len(self.frames)-1)
-            draw_frame_index(len(self.frames)-1)
+            frame_listbox.selection_set(len(self.frames) - 1)
+            draw_frame_index(len(self.frames) - 1)
 
         def set_background_for_frame():
             sel = frame_listbox.curselection()
@@ -635,7 +747,6 @@ class StickFigureAnimation:
                                                     defaultextension=".json")
             if not filename:
                 return
-            # persist UI viewport settings into the animation
             self.viewport_mode = viewport_var.get()
             self.viewport_padding = int(padding_var.get())
             self.viewport_min_w = int(minw_var.get())
@@ -650,7 +761,6 @@ class StickFigureAnimation:
             if not filename:
                 return
             self.load_animation(filename)
-            # update UI to reflect loaded viewport settings
             viewport_var.set(self.viewport_mode)
             padding_var.set(self.viewport_padding)
             minw_var.set(self.viewport_min_w)
@@ -658,7 +768,6 @@ class StickFigureAnimation:
             lock_var.set(self.lock_viewport)
             update_listbox()
             if self.frames:
-                frame_listbox.selection_clear(0, tk.END)
                 frame_listbox.selection_set(0)
                 draw_frame_index(0)
             messagebox.showinfo("Loaded", f"Loaded animation {filename}")
@@ -669,20 +778,18 @@ class StickFigureAnimation:
                                                     defaultextension=".mp4")
             if not filename:
                 return
-            # sync UI -> state
             self.viewport_mode = viewport_var.get()
             self.viewport_padding = int(padding_var.get())
             self.viewport_min_w = int(minw_var.get())
             self.viewport_min_h = int(minh_var.get())
             self.lock_viewport = lock_var.get()
             try:
-                # export using current settings; fixed cell_size used
                 self.export_to_video(filename, fps=5)
                 messagebox.showinfo("Exported", f"Exported animation as {filename}")
             except Exception as e:
                 messagebox.showerror("Export Error", str(e))
 
-        # Play controls
+        # play controls (uses same underlying draw_frame_on_canvas)
         running = {'flag': False, 'loop': False}
 
         def play_animation(loop=False):
@@ -690,7 +797,6 @@ class StickFigureAnimation:
                 return
             running['flag'] = True
             running['loop'] = loop
-
             # sync UI -> state once at start
             self.viewport_mode = viewport_var.get()
             self.viewport_padding = int(padding_var.get())
@@ -698,7 +804,6 @@ class StickFigureAnimation:
             self.viewport_min_h = int(minh_var.get())
             self.lock_viewport = lock_var.get()
 
-            # if lock_viewport is True compute global viewport once here for playback consistency
             playback_viewport = None
             if self.lock_viewport:
                 playback_viewport = self.compute_global_viewport(self.frames)
@@ -715,7 +820,7 @@ class StickFigureAnimation:
                 frame = self.frames[index]
                 bg = self.backgrounds[index] if index < len(self.backgrounds) else None
                 viewport = playback_viewport if playback_viewport is not None else self.compute_viewport(frame)
-                self.draw_frame_on_canvas(canvas, frame, bg, cell_size=self.cell_size, viewport=viewport)
+                self.draw_frame_on_canvas(canvas, frame, background=bg, cell_size=self.cell_size, viewport=viewport)
                 frame_duration = self.timings[index]
                 root.after(frame_duration, lambda: step(index + 1))
 
@@ -739,7 +844,7 @@ class StickFigureAnimation:
                 self.timings[idx] = int(new_duration)
                 update_listbox()
 
-        # double-click to edit duration
+        # Double-click to edit duration
         def on_double_click(event):
             edit_duration()
 
@@ -754,6 +859,40 @@ class StickFigureAnimation:
         root.mainloop()
 
 
+# -------------------------
+# Example: minimal command mapping for quick programmatic deployment
+# -------------------------
 if __name__ == "__main__":
-    anim = StickFigureAnimation()
-    anim.run_animation_gui()
+    """
+    Example interface for a simple command -> animation mapping.
+    This demonstrates how a higher-level system (LLM or script) can choose an animation by name.
+    Replace 'animation1.json' with a real animation file you have.
+
+    Run this file directly and type a command at the prompt (e.g. "wave") to play the mapped animation.
+    """
+    if input("Do you want to access the GUI?") == "yes":
+        anim = StickFigureAnimation()
+        anim.run_animation_gui()
+    else:
+    # Map simple commands to animation filenames
+        command_map = {
+            'wave': 'animations/animation1.json',   # example - replace with your actual file
+        # add other mappings here, e.g. 'jump': 'jump_animation.json'
+        }
+
+    # Minimal text prompt to demo usage
+        print("Demo: type a command like 'wave' to play the corresponding animation. Type 'quit' to exit.")
+        while True:
+            cmd = input("command> ").strip().lower()
+            if cmd in ('q', 'quit', 'exit'):
+                break
+            if cmd not in command_map:
+                print(f"No animation mapped for '{cmd}'. Available: {list(command_map.keys())}")
+                continue
+            filename = command_map[cmd]
+            anim = StickFigureAnimation()
+            try:
+                # Play animation in a minimal window. This call blocks until the window is closed.
+                anim.play_animation_window(animation_filename=filename, cell_size=10, loop=True, viewport_mode='stick-figure', lock_viewport=True)
+            except Exception as e:
+                print(f"Error playing animation '{filename}': {e}")
